@@ -38,16 +38,33 @@ if [ -z "$WORKFLOW_GOOGLE_ANALYTICS_KEY" ]; then
     exit 1
 fi
 
-REPO="git@github.com:square/workflow.git"
-# Accept username/password overrides from environment variables for Github Actions.
-if [ -n "$GIT_USERNAME" -a -n "$GIT_PASSWORD" ]; then
-	echo "Authenticating as $GIT_USERNAME."
-	GIT_CREDENTIALS="$GIT_USERNAME:$GIT_PASSWORD"
-	REPO="https://${GIT_CREDENTIALS}@github.com/square/workflow.git"
-else
-	echo "Authenticating as current user."
-fi
+function getAuthenticatedRepoUrl() {
+	if (( $# == 0 )); then echo "Must pass repo name" >&2; exit 1; fi
+	repoName="$1"
 
+	# Accept username/password overrides from environment variables for Github Actions.
+	if [ -n "$GIT_USERNAME" -a -n "$GIT_PASSWORD" ]; then
+		echo "Authenticating as $GIT_USERNAME." >&2
+		gitCredentials="$GIT_USERNAME:$GIT_PASSWORD"
+		echo "https://${gitCredentials}@github.com/$repoName.git"
+	else
+		echo "Authenticating as current user." >&2
+		echo "git@github.com:$repoName.git"
+	fi
+}
+
+function buildKotlinDocs() {
+	# TODO get deploy ref from caller
+	echo "Shallow-cloning ${DEPLOY_REF}…"
+	git clone --depth 1 --branch $DEPLOY_REF $(getAuthenticatedRepoUrl "square/workflow") $DIR
+
+	cd kotlin
+	./gradlew assemble --build-cache --quiet
+	./gradlew siteDokka --build-cache --quiet
+}
+
+# TODO once both languages are extract, don't need deploy ref for this repo anymore, and can do
+# work inline. Instead, both kotlin and swift deploy refs are needed.
 DEPLOY_REF=$1
 if [ -z "$DEPLOY_REF" ]; then
 	echo "Must pass ref to deploy as first argument." >&2
@@ -74,7 +91,7 @@ rm -rf $DIR
 # This lets us run the scripts from this working copy even if docs are being built
 # for a different ref.
 echo "Shallow-cloning ${DEPLOY_REF}…"
-git clone --depth 1 --branch $DEPLOY_REF $REPO $DIR
+git clone --depth 1 --branch $DEPLOY_REF $(getAuthenticatedRepoUrl "square/workflow") $DIR
 
 # Move working directory into temp folder.
 pushd $DIR
@@ -83,9 +100,8 @@ pushd $DIR
 SWIFT_API_DIR="$(pwd)/docs/swift/api"
 echo "SWIFT_API_DIR=$SWIFT_API_DIR"
 
-# Generate the Kotlin API docs.
 echo "Building Kotlin docs…"
-( cd kotlin && ./gradlew assemble --build-cache --quiet && ./gradlew siteDokka --build-cache --quiet )
+buildKotlinDocs # TODO pass in kotlin-specific deploy ref
 
 # Generate the Swift API docs.
 echo "Building Swift docs…"
